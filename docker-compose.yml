@@ -3,15 +3,56 @@
 # docker-compose v1.27+ required
 
 services:
+  reverse-proxy:
+    # The official v3 Traefik docker image
+    image: traefik:v2
+    # Enables the web UI and tells Traefik to listen to docker
+    command: --api.insecure=true --providers.docker --providers.docker.defaultRule='Host(`{{ normalize .Name }}.docker.localhost`)'
+    ports:
+      # The HTTP port
+      - "80:80"
+      # The Web UI (enabled by --api.insecure=true)
+      - "8080:8080"
+    volumes:
+      # So that Traefik can listen to the Docker events
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - back-tier
+  
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"  # Grafana UI on port 3000
+      - "3000:3000"  
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana 
     depends_on:
       - prometheus
+      - loki
+    networks:
+      - back-tier
+
+  loki:
+    image: grafana/loki:2.9.1
+    ports:
+      - "3100:3100" 
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - back-tier
+
+  promtail:
+    image: grafana/promtail:2.9.1
+    volumes:
+      - /var/log:/var/log           
+      - ./promtail-config.yml:/etc/promtail/promtail-config.yml
+      - /var/run/docker.sock:/var/run/docker.sock  
+    command: -config.file=/etc/promtail/promtail-config.yml
+    depends_on:
+      - loki
     networks:
       - back-tier
 
@@ -24,7 +65,7 @@ services:
       - "/var/lib/docker/:/var/lib/docker:ro"
       - "/dev/disk/:/dev/disk:ro"
     ports:
-      - "8083:8080"  # cAdvisor exposed on 8082
+      - "8083:8080" 
     networks:
       - back-tier
 
@@ -62,7 +103,6 @@ services:
 
   result:
     build: ./result
-    # use nodemon rather than node for local dev
     entrypoint: nodemon --inspect=0.0.0.0 server.js
     depends_on:
       db:
@@ -122,9 +162,6 @@ services:
     networks:
       - back-tier
 
-  # this service runs once to seed the database with votes
-  # it won't run unless you specify the "seed" profile
-  # docker compose --profile seed up -d
   seed:
     build: ./seed-data
     profiles: ["seed"]
@@ -137,7 +174,8 @@ services:
 
 volumes:
   db-data:
-
+  loki-data:
+  grafana-data:   
 networks:
   front-tier:
   back-tier:
